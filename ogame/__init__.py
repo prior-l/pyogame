@@ -1,6 +1,7 @@
 import re
 import requests
 import unittest
+import time
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -75,6 +76,8 @@ class OGame(object):
         self.player = self.landing_page.find('meta', {'name': 'ogame-planet-name'})['content']
         self.player_id = int(self.landing_page.find('meta', {'name': 'ogame-planet-id'})['content'])
 
+        self.last_response = BeautifulSoup("")
+
     def login(self):
         self.session.get('https://lobby.ogame.gameforge.com/')
         login_data = {'identity': self.username,
@@ -106,6 +109,8 @@ class OGame(object):
 
         parsed.find_partial = find_partial
         parsed.find_all_partial = find_all_partial
+
+        self.last_response = parsed
         return parsed
 
     def test(self):
@@ -838,7 +843,7 @@ class OGame(object):
         else:
             return False
 
-    def spyreports(self):
+    def spyreports(self, pause=1.0):
         response = self.session.get(
             url=self.index_php,
             params={'page': 'messages',
@@ -850,13 +855,37 @@ class OGame(object):
 
         reports = []
         for link in report_links:
+            time.sleep(pause)
+
             response = self.session.get(link).text
             bs4 = self.BS4(response)
-            technologys = [tech['class'][0] for tech in bs4.find_all('img')]
-            amounts = [tech.parent.parent.find_all('span')[1].text for tech in bs4.find_all('img')]
+
+            def parse_img_fright(datatype):
+                group = bs4.find("ul", {"data-type": datatype})
+                if group.find(class_="detail_list_fail"):
+                    # TODO Fail class maybe?
+                    return None
+                li_elems = group.find_all("li")
+                return {li.img['class'][0]: int(li.find(class_="fright").text) for li in li_elems}
+
+            def parse_resources():
+                # Resource is first ul, debris would be 2nd
+                li_elems = bs4.find("ul", {"data-type": "resources"}).find_all("li")
+                # Assumes Metal, Crystal, Deuterium ordering
+                return [int(re.sub('[,.]', '', li['title'])) for li in li_elems[:3]]
+
+            # sendShipsWithPopup(mission, galaxy, system, planet, type, count)
+            sendShip = bs4.find("a", {"onclick": re.compile("sendShips")})["onclick"]
 
             class Report:
-                fright = [(tech, amount) for tech, amount in zip(technologys, amounts)]
+                position = tuple(map(int, re.findall(r"[0-9]+", sendShip)[1:5]))
+                report_date = bs4.find(class_="msg_date").text
+                api = re.search(r"value='([\w-]*)'", bs4.find(class_="icon_apikey")['title']).group(1)
+                resources = parse_resources()
+                fleet = parse_img_fright("ships")
+                defence = parse_img_fright("defense")
+                building = parse_img_fright("buildings")
+                research = parse_img_fright("research")
 
             reports.append(Report)
 
